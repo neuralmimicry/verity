@@ -43,6 +43,21 @@ pub struct NumericEvaluation {
 /// Fixed policy is versioned with the evaluator. Changing it changes the policy
 /// digest; callers cannot lower thresholds after observing candidate results.
 pub const POLICY: &str = "numeric-mae-v1:min_rows=30:min_groups=3:relative_mae<=0.95";
+/// A retained historical manifest cannot remain active evidence after either
+/// evaluator implementation or acceptance policy changes.
+fn require_current_report(value: &Value) -> Result<()> {
+    let report: Evaluation =
+        serde_json::from_value(value.clone()).map_err(|_| ApiError::unavailable())?;
+    if report.evaluator_digest != digest(&include_str!("lib.rs"))
+        || report.policy_digest != digest(&POLICY)
+    {
+        return Err(ApiError(
+            axum::http::StatusCode::GONE,
+            "evaluation_revision_changed",
+        ));
+    }
+    Ok(())
+}
 pub fn evaluate(input: &NumericEvaluation, tenant: &str, clock: i64) -> Result<Evaluation> {
     require(
         !input.rows.is_empty()
@@ -122,6 +137,7 @@ async fn run(
         if previous["owner"] != actor.principal || previous["request_digest"] != request_digest {
             return Err(ApiError::conflict());
         }
+        require_current_report(&previous["report"])?;
         return Ok(Json(previous["report"].clone()));
     }
     let permit = app
@@ -161,6 +177,7 @@ async fn report(
     let source: SourceRef =
         serde_json::from_value(record["source"].clone()).map_err(|_| ApiError::unavailable())?;
     app.source(&actor, &source, "evaluate").await?;
+    require_current_report(&record["report"])?;
     Ok(Json(record["report"].clone()))
 }
 #[derive(Deserialize, Serialize)]
@@ -264,6 +281,16 @@ mod tests {
         assert_eq!(evaluate(&i, "t", 100).unwrap().state, EvidenceState::Passed);
         i.rows.truncate(2);
         assert_eq!(evaluate(&i, "t", 100).unwrap().state, EvidenceState::Failed);
+    }
+    #[test]
+    fn evaluator_or_policy_changes_invalidate_retained_active_evidence() {
+        let mut report = json!(evaluate(&input(), "t", 100).unwrap());
+        assert!(require_current_report(&report).is_ok());
+        report["evaluator_digest"] = json!("0".repeat(64));
+        assert!(require_current_report(&report).is_err());
+        report = json!(evaluate(&input(), "t", 100).unwrap());
+        report["policy_digest"] = json!("0".repeat(64));
+        assert!(require_current_report(&report).is_err());
     }
     #[test]
     fn fixtures_cannot_qualify() {
