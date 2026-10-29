@@ -59,12 +59,19 @@ async fn call(
 async fn calls(State(s): State<Fixture>) -> Json<Value> {
     Json(json!({"calls":s.calls.load(Ordering::SeqCst)}))
 }
+async fn briefing(Json(value): Json<Value>) -> Json<Value> {
+    Json(
+        json!({"answer":"fixture-only current commitment","fixture_only":true,
+        "permissions":{"capture":value["question"]=="unsafe-permissions","mirror":false,"train":false}}),
+    )
+}
 #[tokio::main]
 async fn main() {
     let router = Router::new()
         .route("/api/session", get(session))
         .route("/fixture/approval", post(approval))
         .route("/fixture/calls", get(calls))
+        .route("/v1/business/briefings", post(briefing))
         .route("/api/v1/work-items/{id}", get(work))
         .route("/api/mcp/servers/{name}/call", post(call))
         .with_state(Fixture::default());
