@@ -34,9 +34,15 @@ async fn approval(State(s): State<Fixture>, Json(value): Json<Value>) -> Json<Va
     *s.approval.write().await = value;
     Json(json!({"fixture_only":true}))
 }
-async fn work(State(s): State<Fixture>, Path(_): Path<String>) -> Json<Value> {
+async fn work(State(s): State<Fixture>, Path(id): Path<String>) -> Json<Value> {
+    let operation = s.approval.read().await.clone();
+    let status = if operation["arguments"]["closed_work"] == true {
+        "success"
+    } else {
+        "in_operation"
+    };
     Json(
-        json!({"execution_approved":true,"status":"approved","plan":{"relay_operation":s.approval.read().await.clone()}}),
+        json!({"id":id,"execution_approved":true,"status":status,"plan":{"relay_operation":operation}}),
     )
 }
 async fn call(
